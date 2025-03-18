@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Window Manager",
+  "version": "1.0",
+  "description": "Manage and track browser windows as named groups of tabs",
+  "permissions": ["tabs", "storage", "windows"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
