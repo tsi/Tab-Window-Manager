@@ -35,44 +35,85 @@ function updateIcon(saved, tabId) {
     chrome.action.setBadgeBackgroundColor({ color: '#05e70d', tabId });
   } else if (tabId) {
     chrome.action.setBadgeText({ text: '', tabId });
+    chrome.action.setBadgeBackgroundColor({ color: 'transparent', tabId });
   }
 }
 
-// Convert SVG to ImageData
-async function svgToImageData(svgString, size) {
-  const blob = new Blob([svgString], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const img = await createImageBitmap(await fetch(url).then((r) => r.blob()));
-
-  const canvas = new OffscreenCanvas(size, size);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, size, size);
-
-  URL.revokeObjectURL(url);
-  return ctx.getImageData(0, 0, size, size);
-}
-
-// Clean up invalid window references
-async function cleanupWindows() {
+// Clean up and update window references
+async function updateWindowReferences() {
   const storage = await chrome.storage.local.get('windows');
   const windows = storage.windows || [];
 
-  // Get all current Chrome windows
-  const currentWindows = await chrome.windows.getAll();
-  const validWindowIds = new Set(currentWindows.map((w) => w.id));
+  // Get all current Chrome windows with their tabs
+  const currentWindows = await chrome.windows.getAll({ populate: true });
 
-  // Mark windows that no longer exist as closed
-  const updatedWindows = windows.map((w) => {
-    if (!validWindowIds.has(w.currentId)) {
-      return {
-        ...w,
-        currentId: null, // Mark as closed
-      };
+  // Create a map of tab URLs to window IDs and pinned status
+  const tabUrlMap = new Map();
+  const pinnedTabs = new Map();
+
+  currentWindows.forEach(window => {
+    window.tabs.forEach(tab => {
+      // Store both window ID and whether the tab is pinned
+      tabUrlMap.set(tab.url, {
+        windowId: window.id,
+        pinned: tab.pinned
+      });
+    });
+  });
+
+  // Update window references based on matching tabs
+  const updatedWindows = windows.map(savedWindow => {
+    // Check if this saved window's tabs match any current window
+    const matchingWindow = findBestMatchingWindow(savedWindow.tabs, tabUrlMap);
+
+    if (matchingWindow) {
+      // Update pinned status for matched tabs
+      savedWindow.tabs = savedWindow.tabs.map(tab => ({
+        ...tab,
+        pinned: tabUrlMap.get(tab.url)?.pinned || false
+      }));
     }
-    return w;
+
+    return {
+      ...savedWindow,
+      currentId: matchingWindow?.windowId || null
+    };
   });
 
   await chrome.storage.local.set({ windows: updatedWindows });
+
+  // Update icons for all windows
+  for (const window of currentWindows) {
+    await updateExtensionIcon(window.id);
+  }
+}
+
+// Find the best matching window based on tab URLs
+function findBestMatchingWindow(savedTabs, tabUrlMap) {
+  // Count how many tabs match for each window
+  const windowMatches = new Map();
+
+  savedTabs.forEach(savedTab => {
+    const tabInfo = tabUrlMap.get(savedTab.url);
+    if (tabInfo) {
+      const count = windowMatches.get(tabInfo.windowId) || 0;
+      windowMatches.set(tabInfo.windowId, count + 1);
+    }
+  });
+
+  // Find the window with the most matching tabs
+  let bestMatch = null;
+  let maxMatches = 0;
+
+  windowMatches.forEach((matches, windowId) => {
+    // Require at least 50% of tabs to match
+    if (matches >= savedTabs.length / 2 && matches > maxMatches) {
+      maxMatches = matches;
+      bestMatch = { windowId, matchCount: matches };
+    }
+  });
+
+  return bestMatch;
 }
 
 // Update window references when tabs change
@@ -90,12 +131,13 @@ async function updateWindowTabs(windowId) {
       windows[windowIndex].tabs = currentWindow.tabs.map((tab) => ({
         url: tab.url,
         title: tab.title,
+        pinned: tab.pinned
       }));
       await chrome.storage.local.set({ windows });
     }
   } catch (error) {
     console.error('Failed to update window tabs:', error);
-    await cleanupWindows();
+    await updateWindowReferences();
   }
 }
 
@@ -143,8 +185,8 @@ chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
   await updateExtensionIcon(detachInfo.oldWindowId);
 });
 
-// Run cleanup on extension startup
-chrome.runtime.onStartup.addListener(cleanupWindows);
+// Run cleanup and update references on extension startup
+chrome.runtime.onStartup.addListener(updateWindowReferences);
 
 // Run cleanup when extension is installed or updated
-chrome.runtime.onInstalled.addListener(cleanupWindows);
+chrome.runtime.onInstalled.addListener(updateWindowReferences);
