@@ -185,8 +185,29 @@ chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
   await updateExtensionIcon(detachInfo.oldWindowId);
 });
 
-// Run cleanup and update references on extension startup
-chrome.runtime.onStartup.addListener(updateWindowReferences);
+// Helper function to wait for Chrome windows and tabs to initialize
+async function waitForChromeInitialization(retries = 10, delay = 500) {
+  for (let i = 0; i < retries; i++) {
+    const windows = await chrome.windows.getAll({ populate: true });
+    if (windows.length > 0) {
+      console.log('Chrome windows and tabs initialized.');
+      return; // Chrome is initialized
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay)); // Wait before retrying
+  }
+  console.warn('Chrome windows and tabs did not initialize in time.');
+}
 
-// Run cleanup when extension is installed or updated
-chrome.runtime.onInstalled.addListener(updateWindowReferences);
+// Helper function to initialize the extension
+async function initializeExtension() {
+  try {
+    await waitForChromeInitialization(); // Ensure Chrome is fully initialized
+    await updateWindowReferences();
+  } catch (error) {
+    console.error('Failed to initialize extension:', error);
+  }
+}
+
+// Combine startup and installation listeners
+chrome.runtime.onStartup.addListener(initializeExtension);
+chrome.runtime.onInstalled.addListener(initializeExtension);
