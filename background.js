@@ -4,9 +4,7 @@ async function updateExtensionIcon(windowId) {
   const windows = storage.windows || [];
   const isWindowSaved = windows.some((w) => w.currentId === windowId && w.name);
 
-  // Get the active tab in the window
-  const [activeTab] = await chrome.tabs.query({ active: true, windowId });
-  updateIcon(isWindowSaved, activeTab?.id);
+  await updateIcon(isWindowSaved, windowId);
 }
 
 function setIcon(image) {
@@ -27,16 +25,30 @@ function setIcon(image) {
 }
 
 // Sets on/off badge, and for Chrome updates dark/light mode icon
-function updateIcon(saved, tabId) {
+async function updateIcon(saved, windowId) {
   setIcon('icon');
 
-  if (saved && tabId) {
-    chrome.action.setBadgeText({ text: 'on', tabId });
-    chrome.action.setBadgeBackgroundColor({ color: '#05e70d', tabId });
-  } else if (tabId) {
-    chrome.action.setBadgeText({ text: '', tabId });
-    chrome.action.setBadgeBackgroundColor({ color: 'transparent', tabId });
+  if (saved && windowId) {
+    // Get all tabs in the window
+    const tabs = await chrome.tabs.query({ windowId });
+    // Set badge for all tabs in the window
+    for (const tab of tabs) {
+      setBadge(tab.id, true);
+    }
+  } else if (windowId) {
+    // Get all tabs in the window
+    const tabs = await chrome.tabs.query({ windowId });
+    // Clear badge for all tabs in the window
+    for (const tab of tabs) {
+      setBadge(tab.id, false);
+    }
   }
+}
+
+// Helper function to set or clear badge for a tab
+function setBadge(tabId, show) {
+  chrome.action.setBadgeText({ text: show ? 'on' : '', tabId });
+  chrome.action.setBadgeBackgroundColor({ color: show ? '#05e70d' : 'transparent', tabId });
 }
 
 // Clean up and update window references
@@ -166,14 +178,6 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   }
 });
 
-// Handle tab updates
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete') {
-    await updateWindowTabs(tab.windowId);
-    await updateExtensionIcon(tab.windowId);
-  }
-});
-
 // Handle tab moving between windows
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
   await updateWindowTabs(attachInfo.newWindowId);
@@ -181,8 +185,21 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
 });
 
 chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
+  // Don't update badges on detach since it might be a refresh
   await updateWindowTabs(detachInfo.oldWindowId);
-  await updateExtensionIcon(detachInfo.oldWindowId);
+});
+
+// Handle tab updates to maintain badge state
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'loading') {
+    const storage = await chrome.storage.local.get('windows');
+    const windows = storage.windows || [];
+    const isWindowSaved = windows.some((w) => w.currentId === tab.windowId && w.name);
+    
+    if (isWindowSaved) {
+      setBadge(tabId, true);
+    }
+  }
 });
 
 // Helper function to wait for Chrome windows and tabs to initialize
