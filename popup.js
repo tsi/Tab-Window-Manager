@@ -56,7 +56,10 @@ async function loadWindowList() {
   const existingWindows = await chrome.windows.getAll();
   const existingIds = existingWindows.map(w => w.id);
 
-  windowList.innerHTML = windows.map(window => {
+  // Sort windows by timestamp (newest first)
+  const sortedWindows = [...windows].sort((a, b) => b.timestamp - a.timestamp);
+
+  windowList.innerHTML = sortedWindows.map(window => {
     const isCurrentWindow = window.currentId === currentWindowId;
     const isOpen = existingIds.includes(window.currentId);
 

@@ -161,7 +161,16 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 // Update icon when active window changes
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId !== chrome.windows.WINDOW_ID_NONE) {
-    await updateExtensionIcon(windowId);
+    // Update timestamp for the focused window
+    const storage = await chrome.storage.local.get('windows');
+    const windows = storage.windows || [];
+    const updatedWindows = windows.map(w => {
+      if (w.currentId === windowId) {
+        return { ...w, timestamp: Date.now() };
+      }
+      return w;
+    });
+    await chrome.storage.local.set({ windows: updatedWindows });
   }
 });
 
