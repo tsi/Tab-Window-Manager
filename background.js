@@ -8,18 +8,15 @@ async function updateExtensionIcon(windowId) {
 }
 
 function setIcon(image) {
-  var data = {
-    path: {},
-  };
+  const sizes = [16, 32, 48, 128];
+  const path = sizes.reduce((acc, size) => ({
+    ...acc,
+    [size]: `icons/${image}${size}.png`
+  }), {});
 
-  for (let nr of [16, 32, 48, 128]) {
-    data.path[nr] = `icons/${image}${nr}.png`;
-  }
-
-  chrome.action.setIcon(data, function () {
-    var err = chrome.runtime.lastError;
+  chrome.action.setIcon({ path }, (err) => {
     if (err) {
-      console.error('Error in SetIcon: ' + err.message);
+      console.error('Error in SetIcon:', err.message);
     }
   });
 }
@@ -28,20 +25,13 @@ function setIcon(image) {
 async function updateIcon(saved, windowId) {
   setIcon('icon');
 
-  if (saved && windowId) {
-    // Get all tabs in the window
-    const tabs = await chrome.tabs.query({ windowId });
-    // Set badge for all tabs in the window
-    for (const tab of tabs) {
-      setBadge(tab.id, true);
-    }
-  } else if (windowId) {
-    // Get all tabs in the window
-    const tabs = await chrome.tabs.query({ windowId });
-    // Clear badge for all tabs in the window
-    for (const tab of tabs) {
-      setBadge(tab.id, false);
-    }
+  if (!windowId) return;
+
+  // Get all tabs in the window
+  const tabs = await chrome.tabs.query({ windowId });
+  // Set or clear badge for all tabs in the window
+  for (const tab of tabs) {
+    setBadge(tab.id, saved);
   }
 }
 
@@ -61,7 +51,6 @@ async function updateWindowReferences() {
 
   // Create a map of tab URLs to window IDs and pinned status
   const tabUrlMap = new Map();
-  const pinnedTabs = new Map();
 
   currentWindows.forEach(window => {
     window.tabs.forEach(tab => {
@@ -134,16 +123,14 @@ async function updateWindowTabs(windowId) {
   const windows = storage.windows || [];
 
   try {
-    const currentWindow = await chrome.windows.get(windowId, {
-      populate: true,
-    });
+    const currentWindow = await chrome.windows.get(windowId, { populate: true });
     const windowIndex = windows.findIndex((w) => w.currentId === windowId);
 
     if (windowIndex !== -1) {
-      windows[windowIndex].tabs = currentWindow.tabs.map((tab) => ({
-        url: tab.url,
-        title: tab.title,
-        pinned: tab.pinned
+      windows[windowIndex].tabs = currentWindow.tabs.map(({ url, title, pinned }) => ({
+        url,
+        title,
+        pinned
       }));
       await chrome.storage.local.set({ windows });
     }
