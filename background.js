@@ -185,17 +185,25 @@ chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
   await updateWindowTabs(detachInfo.oldWindowId);
 });
 
+// Helper function to set badge for a tab if its window is saved
+async function setBadgeForTab(tab) {
+  const storage = await chrome.storage.local.get('windows');
+  const windows = storage.windows || [];
+  const isWindowSaved = windows.some((w) => w.currentId === tab.windowId && w.name);
+  
+  if (isWindowSaved) {
+    setBadge(tab.id, true);
+  }
+}
+
 // Handle tab updates to maintain badge state
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'loading') {
-    const storage = await chrome.storage.local.get('windows');
-    const windows = storage.windows || [];
-    const isWindowSaved = windows.some((w) => w.currentId === tab.windowId && w.name);
-    
-    if (isWindowSaved) {
-      setBadge(tabId, true);
-    }
-  }
+  await setBadgeForTab(tab);
+});
+
+// Set badge immediately for new tabs in saved windows
+chrome.tabs.onCreated.addListener(async (tab) => {
+  await setBadgeForTab(tab);
 });
 
 // Helper function to wait for Chrome windows and tabs to initialize
