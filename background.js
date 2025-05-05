@@ -4,117 +4,181 @@ async function updateExtensionIcon(windowId) {
   const windows = storage.windows || [];
   const isWindowSaved = windows.some((w) => w.currentId === windowId && w.name);
 
-  await updateIcon(isWindowSaved, windowId);
+  setIconAndBadge('icon', isWindowSaved);
 }
 
-function setIcon(image) {
-  const sizes = [16, 32, 48, 128];
-  const path = sizes.reduce((acc, size) => ({
-    ...acc,
-    [size]: `icons/${image}${size}.png`
-  }), {});
+// Combined icon and badge setting function
+function setIconAndBadge(image, saved) {
+  const data = { path: {} };
 
-  chrome.action.setIcon({ path }, (err) => {
-    if (err) {
-      console.error('Error in SetIcon:', err.message);
-    }
-  });
-}
-
-// Sets on/off badge, and for Chrome updates dark/light mode icon
-async function updateIcon(saved, windowId) {
-  setIcon('icon');
-
-  if (!windowId) return;
-
-  // Get all tabs in the window
-  const tabs = await chrome.tabs.query({ windowId });
-  // Set or clear badge for all tabs in the window
-  for (const tab of tabs) {
-    setBadge(tab.id, saved);
+  for (let nr of [16, 32, 48, 128]) {
+    data.path[nr] = `icons/${image}${nr}.png`;
   }
+
+  chrome.action.setIcon(data, () => {
+    const err = chrome.runtime.lastError;
+    if (err) console.error('Error in SetIcon:', err.message);
+  });
+
+  chrome.action.setBadgeText({ text: saved ? 'on' : '' });
+  chrome.action.setBadgeBackgroundColor({ color: saved ? '#05e70d' : 'transparent' });
 }
 
-// Helper function to set or clear badge for a tab
-function setBadge(tabId, show) {
-  chrome.action.setBadgeText({ text: show ? 'on' : '', tabId });
-  chrome.action.setBadgeBackgroundColor({ color: show ? '#05e70d' : 'transparent', tabId });
+// Normalize URL for better matching
+function normalizeUrl(url) {
+  try {
+    // Skip about:, chrome:, file: and other special URLs
+    if (!url.startsWith('http')) return url;
+
+    const urlObj = new URL(url);
+    // Return just the origin and pathname (no query params, hash, etc)
+    return urlObj.origin + urlObj.pathname;
+  } catch (e) {
+    console.warn('Failed to normalize URL:', url);
+    return url;
+  }
 }
 
 // Clean up and update window references
 async function updateWindowReferences() {
   const storage = await chrome.storage.local.get('windows');
   const windows = storage.windows || [];
-
-  // Get all current Chrome windows with their tabs
   const currentWindows = await chrome.windows.getAll({ populate: true });
 
-  // Create a map of tab URLs to window IDs and pinned status
+  // Create a map of normalized tab URLs to window IDs and pinned status
   const tabUrlMap = new Map();
 
   currentWindows.forEach(window => {
     window.tabs.forEach(tab => {
-      // Store both window ID and whether the tab is pinned
-      tabUrlMap.set(tab.url, {
+      // Store both window ID and tab details with normalized URL
+      tabUrlMap.set(normalizeUrl(tab.url), {
         windowId: window.id,
-        pinned: tab.pinned
+        pinned: tab.pinned,
+        url: tab.url,
+        title: tab.title
       });
     });
   });
 
   // Update window references based on matching tabs
   const updatedWindows = windows.map(savedWindow => {
-    // Check if this saved window's tabs match any current window
     const matchingWindow = findBestMatchingWindow(savedWindow.tabs, tabUrlMap);
 
     if (matchingWindow) {
-      // Update pinned status for matched tabs
-      savedWindow.tabs = savedWindow.tabs.map(tab => ({
-        ...tab,
-        pinned: tabUrlMap.get(tab.url)?.pinned || false
-      }));
+      // Update with fresh tab data but keep original ordering where possible
+      savedWindow.tabs = savedWindow.tabs.map(tab => {
+        const normalizedUrl = normalizeUrl(tab.url);
+        const freshTab = tabUrlMap.get(normalizedUrl);
+        return freshTab ? {
+          url: freshTab.url,
+          title: freshTab.title,
+          pinned: freshTab.pinned || tab.pinned || false // Ensure pinned status is preserved
+        } : tab;
+      });
     }
 
     return {
       ...savedWindow,
-      currentId: matchingWindow?.windowId || null
+      currentId: matchingWindow?.windowId || null,
+      lastUpdated: Date.now()
     };
   });
 
   await chrome.storage.local.set({ windows: updatedWindows });
 
   // Update icons for all windows
-  for (const window of currentWindows) {
-    await updateExtensionIcon(window.id);
-  }
+  currentWindows.forEach(window => updateExtensionIcon(window.id));
 }
 
-// Find the best matching window based on tab URLs
+// Simplified window matching algorithm with normalized URLs
 function findBestMatchingWindow(savedTabs, tabUrlMap) {
-  // Count how many tabs match for each window
   const windowMatches = new Map();
 
+  // Count matches for each window using normalized URLs
   savedTabs.forEach(savedTab => {
-    const tabInfo = tabUrlMap.get(savedTab.url);
+    const normalizedUrl = normalizeUrl(savedTab.url);
+    const tabInfo = tabUrlMap.get(normalizedUrl);
+
     if (tabInfo) {
-      const count = windowMatches.get(tabInfo.windowId) || 0;
-      windowMatches.set(tabInfo.windowId, count + 1);
+      const windowId = tabInfo.windowId;
+      windowMatches.set(windowId, (windowMatches.get(windowId) || 0) + 1);
     }
   });
 
   // Find the window with the most matching tabs
   let bestMatch = null;
   let maxMatches = 0;
+  const threshold = Math.max(1, savedTabs.length * 0.3); // Lower threshold to 30%
 
   windowMatches.forEach((matches, windowId) => {
-    // Require at least 50% of tabs to match
-    if (matches >= savedTabs.length / 2 && matches > maxMatches) {
+    if (matches >= threshold && matches > maxMatches) {
       maxMatches = matches;
       bestMatch = { windowId, matchCount: matches };
     }
   });
 
   return bestMatch;
+}
+
+// Function to expose window state for debugging
+function debugWindowState() {
+  return listTabGroups();
+}
+
+// Make the debug function available to the popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'debugWindowState') {
+    debugWindowState().then(windows => {
+      console.log('%c Current Window State:', 'color: #2563eb; font-weight: bold; font-size: 14px');
+      console.table(windows.map(w => ({
+        id: w.id.substring(0, 8) + '...',
+        name: w.name || '(unnamed)',
+        tabs: w.tabs.length,
+        pinned: w.tabs.filter(t => t.pinned).length,
+        isOpen: w.currentId !== null,
+        windowId: w.currentId,
+        lastSaved: new Date(w.timestamp || w.lastUpdated || Date.now()).toLocaleString()
+      })));
+
+      windows.forEach(w => {
+        if (w.name) {
+          console.group(`Window: ${w.name} (${w.tabs.length} tabs)`);
+          console.table(w.tabs.map(t => ({
+            title: t.title,
+            url: t.url,
+            pinned: t.pinned ? '📌' : ''
+          })));
+          console.groupEnd();
+        }
+      });
+
+      sendResponse({ success: true });
+    }).catch(err => {
+      console.error('Debug error:', err);
+      sendResponse({ success: false, error: err.message });
+    });
+    return true; // Required for async response
+  }
+
+  // Handle creating a window with pinned tabs
+  if (message.action === 'createWindowWithPinnedTabs') {
+    createWindowWithPinnedTabs(message.tabs)
+      .then(newWindow => {
+        sendResponse({success: true, windowId: newWindow.id});
+      })
+      .catch(error => {
+        console.error('Error creating window with pinned tabs:', error);
+        sendResponse({success: false, error: error.message});
+      });
+    return true; // Required for async response
+  }
+});
+
+// List the current tab groups for debugging purposes
+async function listTabGroups() {
+  const {windows = []} = await chrome.storage.local.get('windows');
+  console.log('Current Tab Groups:', windows);
+  return windows;
 }
 
 // Update window references when tabs change
@@ -127,10 +191,10 @@ async function updateWindowTabs(windowId) {
     const windowIndex = windows.findIndex((w) => w.currentId === windowId);
 
     if (windowIndex !== -1) {
-      windows[windowIndex].tabs = currentWindow.tabs.map(({ url, title, pinned }) => ({
-        url,
-        title,
-        pinned
+      windows[windowIndex].tabs = currentWindow.tabs.map((tab) => ({
+        url: tab.url,
+        title: tab.title,
+        pinned: tab.pinned
       }));
       await chrome.storage.local.set({ windows });
     }
@@ -140,95 +204,96 @@ async function updateWindowTabs(windowId) {
   }
 }
 
-// Handle window removal
+// For popup.js - Create window with pinned tabs properly set
+async function createWindowWithPinnedTabs(tabs) {
+  const pinnedTabs = tabs.filter(tab => tab.pinned);
+  const nonPinnedTabs = tabs.filter(tab => !tab.pinned);
+
+  // Create window with first non-pinned tab or empty if all tabs are pinned
+  const newWindow = await chrome.windows.create({
+    url: nonPinnedTabs.length > 0 ? nonPinnedTabs[0].url : undefined,
+    focused: true
+  });
+
+  // First create all pinned tabs
+  for (const tab of pinnedTabs) {
+    await chrome.tabs.create({
+      url: tab.url,
+      pinned: true,
+      windowId: newWindow.id
+    });
+  }
+
+  // Then create remaining non-pinned tabs (skip the first one if it exists)
+  for (let i = 1; i < nonPinnedTabs.length; i++) {
+    await chrome.tabs.create({
+      url: nonPinnedTabs[i].url,
+      pinned: false,
+      windowId: newWindow.id
+    });
+  }
+
+  return newWindow;
+}
+
+// Handles various window/tab events with debouncing
+const pendingUpdates = new Map();
+function scheduleUpdate(windowId, operation) {
+  clearTimeout(pendingUpdates.get(windowId));
+  pendingUpdates.set(windowId, setTimeout(async () => {
+    await operation(windowId);
+    pendingUpdates.delete(windowId);
+  }, 300));
+}
+
+// Event handlers
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const storage = await chrome.storage.local.get('windows');
   const windows = storage.windows || [];
 
-  const updatedWindows = windows.map((w) => {
-    if (w.currentId === windowId) {
-      return {
-        ...w,
-        currentId: null, // Mark as closed
-      };
-    }
-    return w;
-  });
+  const updatedWindows = windows.map((w) =>
+    w.currentId === windowId ? {...w, currentId: null} : w);
 
   await chrome.storage.local.set({ windows: updatedWindows });
 });
 
-// Update icon when active window changes
-chrome.windows.onFocusChanged.addListener(async (windowId) => {
+chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId !== chrome.windows.WINDOW_ID_NONE) {
-    // Update timestamp for the focused window
-    const storage = await chrome.storage.local.get('windows');
-    const windows = storage.windows || [];
-    const updatedWindows = windows.map(w => {
-      if (w.currentId === windowId) {
-        return { ...w, timestamp: Date.now() };
-      }
-      return w;
+    scheduleUpdate(windowId, updateExtensionIcon);
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete') {
+    scheduleUpdate(tab.windowId, async (windowId) => {
+      await updateWindowTabs(windowId);
+      await updateExtensionIcon(windowId);
     });
-    await chrome.storage.local.set({ windows: updatedWindows });
   }
 });
 
 // Handle tab moving between windows
-chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-  await updateWindowTabs(attachInfo.newWindowId);
-  await updateExtensionIcon(attachInfo.newWindowId);
-});
-
-chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
-  // Don't update badges on detach since it might be a refresh
-  await updateWindowTabs(detachInfo.oldWindowId);
-});
-
-// Helper function to set badge for a tab if its window is saved
-async function setBadgeForTab(tab) {
-  const storage = await chrome.storage.local.get('windows');
-  const windows = storage.windows || [];
-  const isWindowSaved = windows.some((w) => w.currentId === tab.windowId && w.name);
-  
-  if (isWindowSaved) {
-    setBadge(tab.id, true);
-  }
+function handleTabWindowChange(windowId) {
+  scheduleUpdate(windowId, async (windowId) => {
+    await updateWindowTabs(windowId);
+    await updateExtensionIcon(windowId);
+  });
 }
 
-// Handle tab updates to maintain badge state
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  await setBadgeForTab(tab);
+chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
+  handleTabWindowChange(attachInfo.newWindowId);
 });
 
-// Set badge immediately for new tabs in saved windows
-chrome.tabs.onCreated.addListener(async (tab) => {
-  await setBadgeForTab(tab);
+chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+  handleTabWindowChange(detachInfo.oldWindowId);
 });
 
-// Helper function to wait for Chrome windows and tabs to initialize
-async function waitForChromeInitialization(retries = 10, delay = 500) {
-  for (let i = 0; i < retries; i++) {
-    const windows = await chrome.windows.getAll({ populate: true });
-    if (windows.length > 0) {
-      console.log('Chrome windows and tabs initialized.');
-      return; // Chrome is initialized
-    }
-    await new Promise((resolve) => setTimeout(resolve, delay)); // Wait before retrying
-  }
-  console.warn('Chrome windows and tabs did not initialize in time.');
-}
+// Run cleanup and update references on extension startup and installation
+chrome.runtime.onStartup.addListener(() => {
+  console.log('Extension starting up, updating window references...');
+  // Give the browser a moment to restore tabs before matching
+  setTimeout(updateWindowReferences, 3000);
+});
 
-// Helper function to initialize the extension
-async function initializeExtension() {
-  try {
-    await waitForChromeInitialization(); // Ensure Chrome is fully initialized
-    await updateWindowReferences();
-  } catch (error) {
-    console.error('Failed to initialize extension:', error);
-  }
-}
-
-// Combine startup and installation listeners
-chrome.runtime.onStartup.addListener(initializeExtension);
-chrome.runtime.onInstalled.addListener(initializeExtension);
+// Run when extension is installed or updated
+chrome.runtime.onInstalled.addListener(updateWindowReferences);

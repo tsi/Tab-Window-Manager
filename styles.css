@@ -178,3 +178,19 @@ input {
   color: #8f3e3e;
   background: none;
 }
+
+.debug-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.btn-secondary {
+  background: #6b7280;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.btn-secondary:hover {
+  background: #4b5563;
+}

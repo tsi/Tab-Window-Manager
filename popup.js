@@ -6,6 +6,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateAddButtonVisibility();
 
   document.getElementById('addWindow').addEventListener('click', addNewWindow);
+
+  // Add debug button functionality
+  document.getElementById('debugBtn').addEventListener('click', () => {
+    chrome.runtime.sendMessage({action: 'debugWindowState'}, (response) => {
+      if (response && response.success) {
+        console.log('Debug data logged to console. Open DevTools to view it.');
+      }
+    });
+  });
 });
 
 async function updateAddButtonVisibility() {
@@ -21,7 +30,8 @@ async function addNewWindow() {
   const window = await chrome.windows.getCurrent({ populate: true });
   const tabs = window.tabs.map(tab => ({
     url: tab.url,
-    title: tab.title
+    title: tab.title,
+    pinned: tab.pinned // Make sure to save pinned status
   }));
 
   const windowData = {
@@ -123,20 +133,27 @@ async function loadWindowList() {
           // Window exists, focus it
           await chrome.windows.update(windowData.currentId, { focused: true });
         } catch (error) {
-          // Window doesn't exist, create new one
-          const newWindow = await chrome.windows.create({
-            url: windowData.tabs.map(tab => tab.url),
-            focused: true
-          });
-
-          // Update the currentId for the window
-          const windows = storage.windows.map(w => {
-            if (w.id === windowId) {
-              return { ...w, currentId: newWindow.id };
+          // Window doesn't exist, create new one using the background script function
+          chrome.runtime.sendMessage(
+            {
+              action: 'createWindowWithPinnedTabs',
+              tabs: windowData.tabs
+            },
+            (response) => {
+              if (response && response.success) {
+                // Update the currentId for the window
+                const windows = storage.windows.map(w => {
+                  if (w.id === windowId) {
+                    return { ...w, currentId: response.windowId };
+                  }
+                  return w;
+                });
+                chrome.storage.local.set({ windows });
+              } else {
+                console.error('Failed to create window with pinned tabs:', response?.error);
+              }
             }
-            return w;
-          });
-          await chrome.storage.local.set({ windows });
+          );
         }
       }
     });
