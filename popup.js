@@ -7,14 +7,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('addWindow').addEventListener('click', addNewWindow);
 
-  // Add debug button functionality
-  document.getElementById('debugBtn').addEventListener('click', () => {
-    chrome.runtime.sendMessage({action: 'debugWindowState'}, (response) => {
-      if (response && response.success) {
-        console.log('Debug data logged to console. Open DevTools to view it.');
-      }
-    });
-  });
+  // Enhanced debug info with better formatting
+  console.log('%cTab Window Manager', 'color: #2563eb; font-weight: bold; font-size: 16px');
+
+
+  console.log('%cRun this to get fresh data:', 'font-style: italic; color: #666');
+
+  // Create a clickable debug command
+  console.log('%c chrome.runtime.sendMessage({action: "listTabGroups"}); ',
+    'background: #f3f4f6; color: #2563eb; padding: 4px 8px; border-radius: 4px; ' +
+    'font-family: monospace; cursor: pointer; border: 1px solid #e5e7eb;');
+
+  // Send message to background script for debug info
+  chrome.runtime.sendMessage({action: 'listTabGroups'});
 });
 
 async function updateAddButtonVisibility() {

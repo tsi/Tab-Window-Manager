@@ -120,43 +120,10 @@ function findBestMatchingWindow(savedTabs, tabUrlMap) {
   return bestMatch;
 }
 
-// Function to expose window state for debugging
-function debugWindowState() {
-  return listTabGroups();
-}
-
 // Make the debug function available to the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'debugWindowState') {
-    debugWindowState().then(windows => {
-      console.log('%c Current Window State:', 'color: #2563eb; font-weight: bold; font-size: 14px');
-      console.table(windows.map(w => ({
-        id: w.id.substring(0, 8) + '...',
-        name: w.name || '(unnamed)',
-        tabs: w.tabs.length,
-        pinned: w.tabs.filter(t => t.pinned).length,
-        isOpen: w.currentId !== null,
-        windowId: w.currentId,
-        lastSaved: new Date(w.timestamp || w.lastUpdated || Date.now()).toLocaleString()
-      })));
-
-      windows.forEach(w => {
-        if (w.name) {
-          console.group(`Window: ${w.name} (${w.tabs.length} tabs)`);
-          console.table(w.tabs.map(t => ({
-            title: t.title,
-            url: t.url,
-            pinned: t.pinned ? '📌' : ''
-          })));
-          console.groupEnd();
-        }
-      });
-
-      sendResponse({ success: true });
-    }).catch(err => {
-      console.error('Debug error:', err);
-      sendResponse({ success: false, error: err.message });
-    });
+  if (message.action === 'listTabGroups') {
+    listTabGroups();
     return true; // Required for async response
   }
 
@@ -177,7 +144,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // List the current tab groups for debugging purposes
 async function listTabGroups() {
   const {windows = []} = await chrome.storage.local.get('windows');
-  console.log('Current Tab Groups:', windows);
+  console.log(windows);
   return windows;
 }
 
