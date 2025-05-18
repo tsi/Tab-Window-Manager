@@ -4,24 +4,34 @@ async function updateExtensionIcon(windowId) {
   const windows = storage.windows || [];
   const isWindowSaved = windows.some((w) => w.currentId === windowId && w.name);
 
-  setIconAndBadge('icon', isWindowSaved);
+  setIconAndBadge('icon', isWindowSaved, windowId);
 }
 
-// Combined icon and badge setting function
-function setIconAndBadge(image, saved) {
+// Modified function to set badge per tab instead of globally
+async function setIconAndBadge(image, saved, windowId) {
+  // The icon itself stays global
   const data = { path: {} };
-
   for (let nr of [16, 32, 48, 128]) {
     data.path[nr] = `icons/${image}${nr}.png`;
   }
-
-  chrome.action.setIcon(data, () => {
-    const err = chrome.runtime.lastError;
-    if (err) console.error('Error in SetIcon:', err.message);
-  });
-
-  chrome.action.setBadgeText({ text: saved ? 'on' : '' });
-  chrome.action.setBadgeBackgroundColor({ color: saved ? '#05e70d' : 'transparent' });
+  chrome.action.setIcon(data);
+  
+  // But we can set badge per tab within the window
+  if (windowId) {
+    // Get tabs in the window
+    const tabs = await chrome.tabs.query({ windowId });
+    // Set badge for each tab in the window
+    for (const tab of tabs) {
+      chrome.action.setBadgeText({ 
+        text: saved ? 'on' : '',
+        tabId: tab.id 
+      });
+      chrome.action.setBadgeBackgroundColor({ 
+        color: saved ? '#05e70d' : 'transparent',
+        tabId: tab.id 
+      });
+    }
+  }
 }
 
 // Normalize URL for better matching
@@ -222,12 +232,6 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
     w.currentId === windowId ? {...w, currentId: null} : w);
 
   await chrome.storage.local.set({ windows: updatedWindows });
-});
-
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId !== chrome.windows.WINDOW_ID_NONE) {
-    scheduleUpdate(windowId, updateExtensionIcon);
-  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
