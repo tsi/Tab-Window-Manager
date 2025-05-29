@@ -18,18 +18,23 @@ async function setIconAndBadge(image, saved, windowId) {
   
   // But we can set badge per tab within the window
   if (windowId) {
-    // Get tabs in the window
-    const tabs = await chrome.tabs.query({ windowId });
-    // Set badge for each tab in the window
-    for (const tab of tabs) {
-      chrome.action.setBadgeText({ 
-        text: saved ? 'on' : '',
-        tabId: tab.id 
-      });
-      chrome.action.setBadgeBackgroundColor({ 
-        color: saved ? '#05e70d' : 'transparent',
-        tabId: tab.id 
-      });
+    try {
+      // Get tabs in the window
+      const tabs = await chrome.tabs.query({ windowId });
+      // Set badge for each tab in the window
+      for (const tab of tabs) {
+        chrome.action.setBadgeText({ 
+          text: saved ? 'on' : '',
+          tabId: tab.id 
+        });
+        chrome.action.setBadgeBackgroundColor({ 
+          color: saved ? '#05e70d' : 'transparent',
+          tabId: tab.id 
+        });
+      }
+    } catch (error) {
+      // Handle case where window might not exist anymore
+      console.warn('Failed to set badge for window:', windowId, error);
     }
   }
 }
@@ -235,6 +240,9 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Immediately update badge for any tab change to maintain window state
+  updateExtensionIcon(tab.windowId);
+  
   if (changeInfo.status === 'complete') {
     scheduleUpdate(tab.windowId, async (windowId) => {
       await updateWindowTabs(windowId);
@@ -257,6 +265,16 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
   handleTabWindowChange(detachInfo.oldWindowId);
+});
+
+// Handle new tab creation - immediately set badge based on window state
+chrome.tabs.onCreated.addListener((tab) => {
+  updateExtensionIcon(tab.windowId);
+});
+
+// Handle tab activation - ensure badge is set correctly
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  updateExtensionIcon(activeInfo.windowId);
 });
 
 // Run cleanup and update references on extension startup and installation

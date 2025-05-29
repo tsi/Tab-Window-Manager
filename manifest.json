@@ -4,6 +4,12 @@
   "version": "1.0",
   "description": "Manage and track named groups of tabs as browser windows",
   "permissions": ["tabs", "storage", "windows"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_popup": "popup.html"
   },
